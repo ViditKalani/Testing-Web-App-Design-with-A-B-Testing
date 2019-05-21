@@ -1,4 +1,4 @@
-# Testing-Web-App-Design-with-A-B-Testing
+# Testing Web App Design with A/B Testing
 
 We sought to test how users of different types interacted with a website displaying public transit stations. Subjects 
 were asked to identify stations in different economic areas, while we also tracked their interactions based on their 
