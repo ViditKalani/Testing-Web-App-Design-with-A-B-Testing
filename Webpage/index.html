@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset='UTF-8'>
+        <title>US Transit</title>
+        <script src='https://d3js.org/d3.v4.min.js'></script>
+        <script src='https://d3js.org/topojson.v3.min.js'></script>
+        <style type='text/css'>
+        .states {
+            fill: #eeeeee;
+            stroke: #fff;
+            stroke-width:2px;
+        }
+        .states:hover {
+            fill: steelblue;
+        }
+        #titlebar {
+            text-align: center;
+        }
+        #body {
+            width: 100%;
+        }
+        #interactive {
+            margin: 0 auto;
+            width: 1100px;
+        }
+        #left-input {
+            display: inline-block;
+            height: 600px;
+        }
+        h4 {
+            display: inline;
+        }
+        .opTitle {
+            margin-top: 1em;
+            margin-bottom: 1em;
+        }
+        select {
+            width: 125px;
+        }
+        button {
+            width: 125px;
+        }
+        #right-map {
+            float: right;
+        }
+        div.tooltip {
+            position: absolute;
+            text-align: center;
+            padding: 2px;
+            font: 12px sans-serif;
+            background: lightsteelblue;
+            border: 0px;
+            border-radius: 8px;
+            pointer-events: none;
+            max-width: 150px;
+        }
+        #description {
+            text-align: center;
+            width: 1000px;
+            margin: auto;
+        }
+        </style>
+    </head>
+    <body>
+        <div id='titlebar'><h1>US Transit</h1></div>
+        <div id='body'>
+            <div id='interactive'>
+                <form id='left-input'>
+                </form>
+                <svg width='960' height='600' id='right-map'></svg>
+            </div>
+            <p id='description'>
+                This app was designed to investigate any correlation between location of transit stations and income in the United States.
+                Stations are displayed as colored dots on the map.
+                The color indicates the income level of the zip code the station is located in. (Green is high, red is low.)
+                The dropdowns on the side can be used to filter the stations that are displayed on the map.
+                Income levels represent the average reported income per person in tens of thousands of dollars.
+            </p>
+        </div>
+    </body>
+
+    <!--
+        Script
+    -->
+
+    <script>
+        // metrics
+        sMapClicks = 0
+        sSelClicks = 0
+        timeSystem = 0
+        timeLine   = 0
+        timeZip    = 0
+        side       = (Math.floor(Math.random() * 2) == 0) ? 'L' : 'R'
+        startTime  = (new Date()).getTime()
+        // random sidebar side
+        if(side == 'R') {
+            // move the map so opposite of the sidebar
+            d3.select('#right-map').style('float', 'left')
+        }
+        var width = 960
+        var height = 500
+
+        var svg = d3.select('#right-map')
+
+        // load map of us states
+        var projection = d3.geoAlbersUsa()
+            .scale(1000)
+            .translate([width / 2, height / 2])
+
+        var path = d3.geoPath().projection(projection)
+        // default values
+        var dScale = projection.scale()
+        var dTranslate = projection.translate()
+        // column names and current selections
+        var columns = ['STATE', 'SYSTEM', 'RTE_NAME', 'ZIP', 'bracket']
+        var selections = ['ALL', 'ALL', 'ALL', 'ALL', 'ALL']
+        // load in transit data
+        d3.csv('transit.csv', function(transit)
+        {
+            // creates a tooltip object for hover over
+            var ttip = d3.select('body').append('div')
+                .attr('class', 'tooltip')
+                .style('opacity', 0);
+            // load in map data to draw states
+            d3.json('us.json', function(error, us)
+            {
+                // create and populate a dropdown for state
+                state = createDropdown('#left-input', 'State', 'Filter stations by state and zoom.', function(d) {
+                    name = d3.select(this).property('value')
+                    sSelClicks++
+                    // zoom in on the selected state
+                    if(name == 'ALL') {
+                        resetZoom()
+                    }
+                    else {
+                        for(i in topojson.feature(us, us.objects.usStates).features) {
+                            var d = topojson.feature(us, us.objects.usStates).features[i]
+                            if(d.properties.STATE_ABBR == name) {
+                                selectState(name, d)
+                                break
+                            }
+                        }
+                    }
+                })
+                populateDropdown(state, addAll(unique(transit, 'STATE')))
+                // create and populate a dropdown for system
+                system = createDropdown('#left-input', 'System', 'Filter stations by transit system and zoom.', function(d) {
+                    // stop timer
+                    if(timeSystem > startTime) {
+                        timeSystem = (new Date()).getTime() - timeSystem
+                    }
+                    selectSystem(d3.select(this).property('value'))
+                })
+                populateDropdown(system, addAll(unique(transit, 'SYSTEM')))
+                // create and populate a dropdown for route
+                route = createDropdown('#left-input', 'Route', 'Filter stations by transit route and zoom.', function(d) {
+                    // stop timer
+                    if(timeLine > startTime) {
+                        timeLine = (new Date()).getTime() - timeLine
+                    }
+                    selectRoute(d3.select(this).property('value'))
+                })
+                populateDropdown(route, addAll(unique(transit, 'RTE_NAME')))
+                // create and populate a dropdown for zip code
+                zip = createDropdown('#left-input', 'Zipcode', 'Filter stations by zip code and zoom.', function(d) {
+                    // stop timer
+                    if(timeZip > startTime) {
+                        timeZip = (new Date()).getTime() - timeZip
+                    }
+                    selections[3] = d3.select(this).property('value')
+                    plotData()
+                })
+                populateDropdown(zip, addAll(unique(transit, 'ZIP')))
+                // create and populate a dropdown for income level
+                income = createDropdown('#left-input', 'Income Level', 'Filter stations by average income of zipcode (tens of thousands) and zoom.', function(d) {
+                    selections[4] = d3.select(this).property('value')
+                    plotData()
+                })
+                populateDropdown(income, addAll(unique(transit, 'bracket')))
+                // create all states
+                var p = svg.selectAll('.states')
+                    .data(topojson.feature(us, us.objects.usStates).features)
+                    .enter()
+                    .append('path')
+                    .attr('class', 'states')
+                    .attr('d', path)
+                    .on('click', function(d) {
+                        // select a state by clicking it
+                        var name = d.properties.STATE_ABBR
+                        sMapClicks++
+                        selectState(name, d)
+                    })
+
+                plotData()
+
+                // create reset button
+                var left = d3.select('#left-input')
+                left.append('br')
+                left.append('br')
+                left.append('button').attr('id', 'reset').attr('type', 'button').text('Reset Zoom')
+                    .on('click', function(d) {
+                        resetZoom()
+                    })
+                left.append('br')
+                left.append('br')
+                left.append('button').attr('id', 'code').attr('type', 'button').text('Get Code')
+                    .on('click', function(d) {
+                        if((sMapClicks == 0 && sSelClicks == 0) || timeSystem == 0 || timeLine == 0 || timeZip == 0) {
+                            alert('You have not completed the tasks!')
+                        }
+                        else {
+                            alert(sMapClicks + '-' + sSelClicks + '-' + timeSystem + '-' + timeLine + '-' + timeZip + '-' + side)
+                        }
+                    })
+                // reset zoom on map
+                function resetZoom() {
+                    selections[0] = 'ALL'
+                    selections[1] = 'ALL'
+                    selections[2] = 'ALL'
+                    selections[3] = 'ALL'
+                    d3.select('#State').property('value', 'ALL')
+                    populateDropdown(system, addAll(unique(select(transit, ['STATE'], ['ALL']), 'SYSTEM')))
+                    populateDropdown(zip, addAll(unique(select(transit, ['STATE'], ['ALL']), 'ZIP')))
+                    populateDropdown(route, addAll(unique(select(transit, ['STATE'], ['ALL']), 'RTE_NAME')))
+                    projection.translate(dTranslate)
+                    projection.scale(dScale)
+                    p.attr('d', path)
+                    plotData()
+                }
+                // zoom in on a given state
+                function selectState(name, d) {
+                    selections[0] = name
+                    selections[1] = 'ALL'
+                    selections[2] = 'ALL'
+                    selections[3] = 'ALL'
+                    d3.select('#State').property('value', name)
+                    populateDropdown(system, addAll(unique(select(transit, ['STATE'], [name]), 'SYSTEM')))
+                    populateDropdown(zip, addAll(unique(select(transit, ['STATE'], [name]), 'ZIP')))
+                    populateDropdown(route, addAll(unique(select(transit, ['STATE'], [name]), 'RTE_NAME')))
+                    zoomBounds(path.bounds(d), false)
+                }
+                // zoom in on a given system
+                function selectSystem(name) {
+                    selections[1] = name
+                    selections[2] = 'ALL'
+                    selections[3] = 'ALL'
+                    d3.select('#System').property('value', name)
+                    populateDropdown(zip, addAll(unique(select(transit, ['SYSTEM'], [name]), 'ZIP')))
+                    populateDropdown(route, addAll(unique(select(transit, ['SYSTEM'], [name]), 'RTE_NAME')))
+                    zoomBounds(getBounds(select(transit, columns, selections)), true)
+                }
+                // zoom in on a given system
+                function selectRoute(name) {
+                    selections[2] = name
+                    selections[3] = 'ALL'
+                    d3.select('#Route').property('value', name)
+                    populateDropdown(zip, addAll(unique(select(transit, ['RTE_NAME'], [name]), 'ZIP')))
+                    zoomBounds(getBounds(select(transit, columns, selections)), true)
+                }
+                // zoom in on a given state
+                function zoomBounds(bounds, project) {
+                    // get the current state of the map
+                    var currScale = projection.scale()
+                    var currTranslate = projection.translate()
+                    if(project) {
+                        bl = projection(bounds[0])
+                        tr = projection(bounds[1])
+                    }
+                    else {
+                        bl = bounds[0]
+                        tr = bounds[1]
+                    }
+                    // calculate translation and scale
+                    // distance from the edges
+                    var dx = tr[0] - bl[0]
+                    var dy = tr[1] - bl[1]
+                    // center point
+                    var x = (bl[0] + tr[0]) / 2
+                    var y = (bl[1] + tr[1]) / 2
+                    var scale = 0.95 / Math.max(dx / width, dy / height)
+                    var translate = [width/2 + scale*(currTranslate[0] - x), height/2 + scale*(currTranslate[1] - y)]
+                    // apply translate and sclae
+                    projection.translate(translate)
+                    projection.scale(scale * currScale)
+                    p.attr('d', path)
+                    plotData()
+                }
+                // function to plot current selected data on the map
+                function plotData()
+                {
+                    var data = select(transit, columns, selections)
+                    svg.selectAll('circle').remove()
+                    svg.selectAll('circle')
+                        .data(data).enter()
+                        .append('circle')
+                        .attr('transform', function (d) { return 'translate(' + projection([d.LONGITUDE, d.LATITUDE]) + ')'})
+                        .attr('r', '3px')
+                        .attr('fill', function(d) {
+                            // use a gradient to color dots
+                            var grad = [{ key: '1', value: '#ff0000' },
+                                        { key: '2', value: '#ff0000' },
+                                        { key: '3', value: '#ff3800' },
+                                        { key: '4', value: '#ff7100' },
+                                        { key: '5', value: '#ffaa00' },
+                                        { key: '6', value: '#ffe200' },
+                                        { key: '7', value: '#e2ff00' },
+                                        { key: '8', value: '#a9ff00' },
+                                        { key: '9', value: '#71ff00' },
+                                        { key: '10', value: '#38ff00' },
+                                        { key: '> 10', value: '#00ff00' }]
+                            if(grad[d.bracket] === undefined) {
+                                // black if there is no data
+                                return '#00ff00'
+                            }
+                            else {
+                                return grad[d.bracket].value
+                            }
+                        })
+                        .on('mouseover', function(d) {
+                            // on mouse over show name and income in tooltip
+                            var name = d.STATION
+                            var income = d.income
+                            console.log(name + ' $' + income)
+                            ttip.transition()
+                                .duration(200)
+                                .style('opacity', 0.9)
+                            ttip.html(name + '<br>$' + income)
+                                .style('left', d3.event.pageX + 'px')
+                                .style('top', (d3.event.pageY - 28) + 'px')
+                        })
+                        .on('mouseout', function(d) {
+                            // hide tooltip on mouseout
+                            ttip.transition()
+                                .duration(500)
+                                .style('opacity', 0)
+                        })
+                        .on('click', function(d) {
+                            // start timer
+                            if(d.STATION == 'Harvard' && timeSystem == 0) {
+                                timeSystem = (new Date()).getTime()
+                            }
+                            else if(d.STATION == 'Harvard' && timeLine == 0) {
+                                timeLine = (new Date()).getTime()
+                            }
+                            else if(d.STATION == 'Harvard' && timeZip == 0) {
+                                timeZip = (new Date()).getTime()
+                            }
+                            else {
+                                // filter by route by clicking
+                                var route = d.RTE_NAME
+                                selectRoute(route)
+                            }
+                        })
+                }
+                // function to create a dropdown (select)
+                function createDropdown(parentName, name, helpTxt, onChange)
+                {
+                    parent = d3.select(parentName)
+                    container = parent.append('div')
+                    container.attr('class', 'opTitle')
+                    title = container.append('h4')
+                    title.html(name)
+                    help = container.append('img')
+                    help.attr('src', 'question.png')
+                        .style('float', 'right')
+                        .on('mouseover', function(d) {
+                            // on mouse over show help in tooltip
+                            ttip.transition()
+                                .duration(200)
+                                .style('opacity', 0.9)
+                            ttip.html(helpTxt)
+                                .style('left', d3.event.pageX + 'px')
+                                .style('top', (d3.event.pageY - 28) + 'px')
+                        })
+                        .on('mouseout', function(d) {
+                            // hide tooltip on mouseout
+                            ttip.transition()
+                                .duration(500)
+                                .style('opacity', 0)
+                        })
+                    dropdown = parent.append('select')
+                    dropdown.attr('name', name)
+                        .attr('id', name)
+                        .on('change', onChange)
+                    return dropdown
+                }
+            })
+        })
+        // function to populate a dropdown (select)
+        function populateDropdown(dropdown, options)
+        {
+            dropdown.selectAll('option').remove()
+            dropdown.selectAll('option')
+                .data(options).enter()
+                .append('option')
+                .attr('value', function (d) { return d })
+                .text(function (d) { return d })
+        }
+        // function to select data based on a list of keys and values
+        function select(data, keys, values)
+        {
+            result = [];
+            data.forEach(function(row)
+            {
+                var passed = true
+                for(i in keys)
+                {
+                    if(values[i] != 'ALL')
+                    {
+                        var found = false
+                        row[keys[i]].split('||').forEach(function(val)
+                        {
+                            if(val == values[i])
+                            {
+                                found = true
+                            }
+                        })
+                        if(!found)
+                        {
+                            passed = false
+                            break;
+                        }
+                    }
+                }
+                if(passed)
+                {
+                    result.push(row)
+                }
+            })
+            return result
+        }
+        // function to get all unique values for a key
+        function unique(data, key)
+        {
+            result = [];
+            data.forEach(function(row)
+            {
+                row[key].split("||").forEach(function(value)
+                {
+                    if(!result.includes(value))
+                    {
+                        result.push(value)
+                    }
+                })
+            })
+            return result.sort()
+        }
+        // function to add 'ALL' to the begining of a list
+        function addAll(list)
+        {
+            list.unshift('ALL')
+            return list
+        }
+        // find bounds of a set of points
+        function getBounds(data) {
+            var left = data[0].LONGITUDE
+            var right = data[0].LONGITUDE
+            var top = data[0].LATITUDE
+            var bottom = data[0].LATITUDE
+            for(i in data) {
+                d = data[i]
+                if(d.LONGITUDE < left) {
+                    left = d.LONGITUDE
+                }
+                else if(d.LONGITUDE > right) {
+                    right = d.LONGITUDE
+                }
+                if(d.LATITUDE < bottom) {
+                    bottom = d.LATITUDE
+                }
+                else if(d.LATITUDE > top) {
+                    top = d.LATITUDE
+                }
+            }
+            return [[right, top], [left, bottom]]
+        }
+    </script>
+</html>
