@@ -34,8 +34,7 @@ confint(data.lm)
 anova(data.lm)
 
 #predictions
-predict(data.lm, newdata = data.frame(Age = levels(UTS$Age), DropClicks = mean(UTS$DropClicks, na.rm = TRUE)), 
-interval = "prediction")
+predict(data.lm, newdata = data.frame(Age = levels(UTS$Age), DropClicks = mean(UTS$DropClicks, na.rm = TRUE)), interval = "prediction")
 
 
 #generating effects plots
@@ -52,8 +51,6 @@ ggplot(fit, aes(y = fit, x = Age)) + geom_pointrange(aes(ymin = lwr, ymax = upr)
 
 #adding observed values
 ggplot(fit, aes(y = fit, x = Age)) + geom_point(data = UTS, aes(y = MapClicks),
-                                              col = "grey") + geom_pointrange(aes(ymin = lwr, ymax = upr)) + 
-                                              scale_y_continuous("Y") +
+                                              col = "grey") + geom_pointrange(aes(ymin = lwr, ymax = upr)) + scale_y_continuous("Y") +
   scale_x_discrete("X") + theme_classic() + theme(axis.title.y = element_text(vjust = 1,
-                                                                              size = rel(1.25)), axis.title.x = 
-                                                                              element_text(vjust = -1, size = rel(1.25)))
+                                                                              size = rel(1.25)), axis.title.x = element_text(vjust = -1, size = rel(1.25)))
